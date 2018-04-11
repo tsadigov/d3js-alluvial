@@ -1,10 +1,31 @@
 <html>
 <body>
-<svg width="960" height="500"></svg>
+<svg width="600" height="800"></svg>
 <script src="d3.v4.min.js"></script>
-<script type="test">
+<script >
 
-var pages=["Closed","Splash","Login","Request","Attachment","Project"];
+  var svg = d3.select("svg"),
+    margin = {top: 20, right: 20, bottom: 30, left: 40},
+    width = +svg.attr("width") - margin.left - margin.right,
+    height = +svg.attr("height") - margin.top - margin.bottom,
+    g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+var x = d3.scaleLinear()
+    .rangeRound([0, width]);
+    /*d3.scaleBand()
+    .rangeRound([0, width])
+    .paddingInner(0.05)
+    .align(0.1);*/
+
+var y = d3.scaleLinear()
+    .rangeRound([ 0,height]);
+
+var z = d3.scaleOrdinal()
+    .range(["#98abc5", "#8a89a6", "#7b6888", "#6b486b", "#a05d56", "#d0743c", "#ff8c00"]);
+
+//---------------------------------------------------------------------------------------
+var pages=["Closed","Splash"];
+//,"Login","Request","Attachment","Project"];
 
 
 var data=[
@@ -18,6 +39,7 @@ function getRandomInt(max) {
 
 var totatSize=100;
 function generateData(stepDepth){
+  data=[];
 	for(var stepNo=0;stepNo<stepDepth;stepNo++){
 		var used=0;
 
@@ -25,21 +47,23 @@ function generateData(stepDepth){
 		for(var itrFrom in pages)
 		for(var itrTo   in pages)
 		{
-			var transitionCount=getRandomInt(totatSize-used);
+			var transitionCount= Math.round(getRandomInt(totatSize-used)/6);
+      //console.log(pages[itrFrom]+'>'+pages[itrTo]+'   '+transitionCount+' used '+used);
 			used+=transitionCount;
 
 			transition={
 				from:pages[itrFrom],
 				to:pages[itrTo],
-				count:transitionCount
+				count:transitionCount,
+        type:"link"
 
 			};
 			stepTransitions.push(transition);
 		}
 		data.push(stepTransitions);
 	}
+  return data;
 }
-console.log(generateData(3));
 
 
 function getBins(stepTransitions,getParentId){
@@ -53,29 +77,349 @@ function getBins(stepTransitions,getParentId){
 		if(undefined==currentParent){
 			currentParent={
 				name:newParentId,
-				children:[]
+				children:[],
+        total:0
 			};
 			bins[newParentId]=currentParent;
 		}
 
 		currentParent.children.push(item);
+    currentParent.total+=item.count;
 	}
+
 
 	return bins;
 }
 
 
+function getBins2(stepTransitions,getParentId,parentReference){
+  var bins=[];
+  
+
+  for(var idx=0;idx<stepTransitions.length;idx++){
+    var item=stepTransitions[idx];
+    var newParentId=pages.indexOf( getParentId(item) );
+    var currentParent=bins[newParentId];
+    if(undefined==currentParent){
+      currentParent=[];
+      currentParent.total=0;
+      currentParent.name=getParentId(item);
+      currentParent.type="bin";
+      bins[newParentId]=currentParent;
+      currentParent.column=bins;
+    }
+
+    currentParent.push(item);
+    item[parentReference]=currentParent;
+
+    currentParent.total+=item.count;
+  }
+
+  bins[0].offset=0;
+  for(var idx=1;idx<bins.length;idx++){
+    bins[idx].offset=bins[idx-1].total+bins[idx-1].offset;
 
 
+
+  }
+
+  for(var idx=0;idx<bins.length;idx++){
+
+
+    bins[idx][0][parentReference+"Offset"]=0;
+    for(var idx2=1;idx2<bins[idx].length;idx2++){
+      var c=bins[idx][idx2-1].count;
+      var o=bins[idx][idx2-1][parentReference+"Offset"];
+      bins[idx][idx2][parentReference+"Offset"]=c+o;
+
+    }
+
+  }
+
+  bins.type="column";
+  return bins;
+}
+
+
+console.log('prepare data');
+function distribute(columnFrom,columnTo,links){
+  var colFrom={},colTo={};
+
+  for(var idx=0;idx<links.length;idx++){
+
+    var link=links[idx];
+    
+    var binFrom=colFrom[link.from];
+    if(undefined==binFrom)
+      colFrom[link.from]=binFrom={
+        name:link.from,
+        toChildren:[],
+        fromChildren:[]
+      };
+    
+    
+    var binTo=colTo[link.to];
+    if(undefined==binTo)
+      colTo[link.to]=binTo={
+        name:link.to, 
+        toChildren:[],
+        fromChildren:[]
+      };
+
+      binFrom.fromChildren.push(link);
+      binTo.toChildren.push(link);
+
+      link.fromParent=binFrom;
+      link.toParent=binTo;
+
+  }
+
+  for(var idx=0;idx<pages.length;idx++){
+    var i=pages[idx];
+    columnFrom.push(colFrom[i]);
+    columnTo.push(colTo[i]);
+  }
+
+
+  for(var idx=0;idx<columnFrom.length;idx++){
+    var bin=columnFrom[idx];
+    bin.fromChildren.sort(comparatorBy("from"));
+
+    bin.fromChildren[0].fromParentOffset=0;
+    for(var i2=0;i2<bin.fromChildren.length-1;i2++)
+      bin.fromChildren[i2+1].fromParentOffset=bin.fromChildren[i2].fromParentOffset+bin.fromChildren[i2].count;
+
+
+  }
+
+  for(var idx=0;idx<columnTo.length;idx++){
+    var bin=columnTo[idx];
+    bin.toChildren.sort(comparatorBy("to"));
+
+    bin.toChildren[0].toParentOffset=0;
+    for(var i2=0;i2<bin.toChildren.length-1;i2++)
+      bin.toChildren[i2+1].toParentOffset=bin.toChildren[i2].toParentOffset+bin.toChildren[i2].count;
+  }
+
+
+}
+
+var binData=generateData(2).map( function(arr,i){var l=getBins2(arr,function(x){return x.from;},'fromParent');l.index=i; console.log(l);return l;});
+console.log(' ready ');
+
+function comparatorBy(fieldName){
+  return function compareLink(b1,b2){
+    var idx1=pages.indexOf(b1[fieldName]);
+    var idx2=pages.indexOf(b2[fieldName]);
+    return idx2-idx1;
+  };
+}
+
+function bindFrom(src,dest){
+  console.log("bindFrom");
+  for(var srcIdx=0;srcIdx<src.length;srcIdx++){
+    var srcBin=src[srcIdx];
+
+    for(var linkIdx=0;linkIdx<srcBin.length;linkIdx++){
+      var link=srcBin[linkIdx];
+      var destBin=dest.find(function(x){return x.name==link.to;});//assuming same order
+      link.toParent=destBin;
+      if(undefined==destBin.toChildren)
+        destBin.toChildren=[];
+
+      destBin.toChildren.push(link);
+      console.log(link);
+    } 
+  }
+  console.log("bindFrom");
+
+}
+
+
+
+
+for(var idx=binData.length-1;idx>0;idx--){
+  bindFrom(binData[idx-1],binData[idx]);
+}
+
+for(var idxCol=1;idxCol<binData.length;idxCol++)
+for(var idx=0;idx<binData[idxCol].length;idx++){
+  var bin=binData[idxCol][idx];
+  if(undefined==bin.toChildren)
+    continue;
+  bin.toChildren.sort(comparatorBy("to"));
+
+  bin.toChildren[0].toParentOffset=0;
+  for(var linkIdx=0;linkIdx<bin.toChildren.length-1;linkIdx++){
+    bin.toChildren[linkIdx+1].toParentOffset=bin.toChildren[linkIdx].toParentOffset+bin.toChildren[linkIdx].count;
+    console.log(linkIdx);
+    console.log(bin.toChildren[linkIdx+1]);
+  }
+}
+
+x.domain([0,binData.length]);
+y.domain([0, totatSize]);
+z.domain(pages);
+
+var clr=0;
 
 var svg = d3.select("svg");
+
+var columns=svg
+.selectAll("g.column")
+.data(binData)
+.enter()
+.append("g")
+.attr("class","column")
+.attr("data-log",function(d,i){return i;} )
+.attr("transform",function(d,i){return "translate("+x(i)+",0)";})
+
+
+var bins=columns
+.selectAll("rect")
+    .data(function(d) { return d; });
+
+    bins.enter()
+    .append("rect")
+      .attr("y", function(d,i) {return y(d.offset); })
+      .attr("height", function(d) { return y(d.total); })
+      .attr("width", 100)
+      .attr("fill",function(d,i){return z(d.name);});
+
+
+columns
+.selectAll("text")
+    .data(function(d) { return d; });
+
+    bins.enter()
+    .append("text")
+      .attr("y", function(d,i) {return y(d.offset)+15; })
+      .text(function(d,i) {return "y:"+y(d.offset)+"-"+y(d.total); })
+      ;
+
+
+
+var curvature = .5;
+
+function drawJunction(from){
+
+  var height=y(from.count);
+   var y0=y(from.fromParent.offset+from.fromParentOffset),//y(from.offset),
+   x0=100,
+   x1=300,
+   xi = d3.interpolateNumber(x0, x1),
+          x2 = xi(curvature),
+          x3 = xi(1 - curvature),
+          ytr =  y(((undefined==from.toParent)?700:from.toParent.offset)+(undefined==from.toParentOffset?-200:from.toParentOffset)-15),
+          ybr = ytr + height,
+          ybl = y0 + height;
+
+  console.log('drawJunction');
+  console.log(from);
+   
+
+  var path= "M" + x0 + "," + y0  //top left corner
+           
+           + "C" + x2 + "," + y0  //top left curve
+           + " " + x3 + "," + ytr //top right curve
+           + " " + x1 + "," + ytr //Top right corner
+           + "L" + x1 + "," + ybr //bottom right corner
+           + "C" + x3 + "," + ybr //bottom right curve
+           + " " + x2 + "," + ybl //bottom left curve
+           + " " + x0 + "," + ybl //bottom left corner
+           + "L" + x0 + "," + (y0);
+           console.log(path);
+  return path;
+}
+
+var path=
+/*
+columns
+.selectAll("g.path")
+.data(function(d){return d;})
+*/bins
+.enter()
+.append("g")
+.attr("class","path")
+.attr("data-type",function(d,i){console.log('column>bin');console.log(d);return d.type;})
+;
+
+path.selectAll("path").data(function(d){console.log(d);return d;})
+.enter()
+.append("path")
+      .attr("d", function(d,i) {console.log("path");console.log(d);return  drawJunction(d); })
+      .attr("fill",function(d,i){return z(d.from);})
+      .attr("data-type",function(d,i){console.log('bin>path');console.log(d);return d.type;})
+      ;
+
+
+
+
+path
+.selectAll("text")
+.data(function(d){console.log(d);return d;})
+.enter()
+.append("text")
+      //.attr("d", function(d,i) {console.log("path");console.log(d);return  drawJunction(d); })
+      .text(function(link,i){var txt= y(((undefined==link.toParent)?-200:link.toParent.offset)+(undefined==link.toParentOffset?-200:link.toParentOffset))+"-"+link.count+":"+link.from+">"+link.to;console.log(txt);return txt;})
+      .attr("y",function(from,i){var yy= y(((undefined==from.toParent)?-200:from.toParent.offset)+(undefined==from.toParentOffset?-200:from.toParentOffset));console.log(yy);return yy;})
+      .attr("x",200);
+;
+;
+/*
+
+
+.selectAll("g")
+.data(function(d){console.log(d);return d;})
+.append("g")
+.attr("data-type",function(d,i){console.log('bin>path');console.log(d);return d.type;})
+
+
+.selectAll("path") 
+    .data(function(d,i) {console.log('---');console.log(d); return d; })
+    .enter()
+
+    .append("path")
+      .attr("d", function(d,i) {console.log("path");console.log(d);return  drawJunction(d); })
+      
+      .attr("fill",function(d,i){return z(d.name);});
+*/
+
 </script>
 
 
 
 
 
-<script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<script type="x">
 
 
 var svg = d3.select("svg"),
@@ -92,12 +436,18 @@ var x = d3.scaleBand()
 var y = d3.scaleLinear()
     .rangeRound([height, 0]);
 
+
+
+
 var z = d3.scaleOrdinal()
     .range(["#98abc5", "#8a89a6", "#7b6888", "#6b486b", "#a05d56", "#d0743c", "#ff8c00"]);
 
-d3.csv("data.csv", 
+d3.csv("https://raw.githubusercontent.com/tsadigov/d3js-alluvial/master/data.csv", 
 function(d, i, columns) {
-  for (i = 1, t = 0; i < columns.length; ++i) t += d[columns[i]] = +d[columns[i]];
+  for (i = 1, t = 0; i < columns.length; ++i) {
+    d[columns[i]] = +d[columns[i]];//int.Parse
+    t += d[columns[i]];
+  }
   d.total = t;
   return d;
 }, 
@@ -121,7 +471,7 @@ function(error, data) {
     .enter().append("rect")
       .attr("x", function(d) { return x(d.data.State); })
       .attr("y", function(d) { return y(d[1]); })
-      .attr("height", function(d) { return y(d[0]) - y(d[1]); })
+      .attr("height", function(d) {return y(d[0]) - y(d[1]); })
       .attr("width", x.bandwidth());
 
   g.append("g")
